@@ -1,19 +1,59 @@
 use std::{
     cell::UnsafeCell,
+    fmt::Debug,
+    mem::ManuallyDrop,
     ops::{Deref, Index, RangeBounds},
     sync::Arc,
 };
 
+struct Shared {
+    ptr: *mut u8,
+    capacity: usize,
+}
+
+impl Debug for Shared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            let slice = std::slice::from_raw_parts(self.ptr, self.capacity);
+            f.debug_tuple("Shared").field(&slice).finish()
+        }
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        unsafe {
+            Vec::from_raw_parts(self.ptr, 0, self.capacity);
+        }
+    }
+}
+
+impl Shared {
+    fn slice(&self, range: impl RangeBounds<usize>) -> &[u8] {
+        let (start, end) = get_range(range, self.capacity);
+        unsafe { std::slice::from_raw_parts(self.ptr.add(start), end - start) }
+    }
+}
+
+impl From<Vec<u8>> for Shared {
+    fn from(vec: Vec<u8>) -> Self {
+        let mut vec = ManuallyDrop::new(vec);
+        Self {
+            ptr: vec.as_mut_ptr(),
+            capacity: vec.capacity(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct AppendOnlyBytes {
-    raw: Arc<UnsafeCell<Box<[u8]>>>,
-    end: *mut u8,
+    raw: Arc<Shared>,
     len: usize,
 }
 
 #[derive(Debug)]
 pub struct BytesSlice {
-    raw: Arc<UnsafeCell<Box<[u8]>>>,
+    raw: Arc<Shared>,
     start: usize,
     end: usize,
 }
@@ -28,7 +68,7 @@ impl AppendOnlyBytes {
 
     #[inline(always)]
     fn raw(&self) -> &[u8] {
-        unsafe { self.raw.get().as_ref().unwrap() }
+        self.raw.slice(..)
     }
 
     #[inline(always)]
@@ -38,9 +78,8 @@ impl AppendOnlyBytes {
         unsafe {
             vec.set_len(capacity)
         };
-        let raw = Arc::new(UnsafeCell::new(vec.into_boxed_slice()));
-        let end = unsafe { raw.get().as_mut().unwrap().as_mut_ptr() };
-        Self { raw, end, len: 0 }
+        let raw = Arc::new(vec.into());
+        Self { raw, len: 0 }
     }
 
     #[inline(always)]
@@ -62,9 +101,8 @@ impl AppendOnlyBytes {
     pub fn push_slice(&mut self, slice: &[u8]) {
         self.reserve(slice.len());
         unsafe {
-            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.end, slice.len());
+            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.raw.ptr.add(self.len), slice.len());
             self.len += slice.len();
-            self.end = self.end.add(slice.len());
         }
     }
 
@@ -77,9 +115,8 @@ impl AppendOnlyBytes {
     pub fn push(&mut self, byte: u8) {
         self.reserve(1);
         unsafe {
-            std::ptr::write(self.end, byte);
+            std::ptr::write(self.raw.ptr.add(self.len), byte);
             self.len += 1;
-            self.end = self.end.add(1);
         }
     }
 
@@ -95,13 +132,8 @@ impl AppendOnlyBytes {
             let src = std::mem::replace(self, Self::with_capacity(new_capacity));
             // SAFETY: copy from src to dst, both have at least the capacity of src.len()
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    src.raw.get().as_ref().unwrap().as_ptr(),
-                    self.end,
-                    src.len(),
-                );
+                std::ptr::copy_nonoverlapping(src.raw.ptr, self.raw.ptr, src.len());
                 self.len = src.len();
-                self.end = self.end.add(src.len());
             }
         }
     }
@@ -173,7 +205,7 @@ unsafe impl Sync for BytesSlice {}
 impl BytesSlice {
     #[inline(always)]
     fn bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.raw.get().as_ref().unwrap().as_ptr(), self.len()) }
+        self.raw.slice(self.start..self.end)
     }
 
     #[inline(always)]
@@ -277,7 +309,7 @@ mod tests {
         a.push_str("123");
         assert_eq!(a.slice_str(0..1).unwrap(), "1");
         let b = a.slice(..);
-        thread::spawn(move || {
+        let t = thread::spawn(move || {
             for _ in 0..10 {
                 a.push_str("456");
                 dbg!(a.slice_str(..).unwrap());
@@ -290,5 +322,6 @@ mod tests {
         });
 
         assert_eq!(b.deref(), "123".as_bytes());
+        t.join();
     }
 }
