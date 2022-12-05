@@ -1,8 +1,8 @@
 use std::{
-    cell::UnsafeCell,
     fmt::Debug,
     mem::ManuallyDrop,
     ops::{Deref, Index, RangeBounds},
+    slice::SliceIndex,
     sync::Arc,
 };
 
@@ -164,6 +164,13 @@ impl AppendOnlyBytes {
     }
 }
 
+impl Default for AppendOnlyBytes {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[inline(always)]
 fn get_range(range: impl RangeBounds<usize>, max_len: usize) -> (usize, usize) {
     let start = match range.start_bound() {
@@ -181,14 +188,14 @@ fn get_range(range: impl RangeBounds<usize>, max_len: usize) -> (usize, usize) {
     (start, end)
 }
 
-// impl<I: SliceIndex<[u8]>> Index<I> for AppendOnlyBytes {
-//     type Output = I::Output;
+impl<I: SliceIndex<[u8]>> Index<I> for AppendOnlyBytes {
+    type Output = I::Output;
 
-//     #[inline]
-//     fn index(&self, index: I) -> &Self::Output {
-//         Index::index(self.raw(), index)
-//     }
-// }
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        Index::index(self.raw.slice(..), index)
+    }
+}
 
 impl Deref for AppendOnlyBytes {
     type Target = [u8];
@@ -211,6 +218,11 @@ impl BytesSlice {
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.end - self.start
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.end == self.start
     }
 
     #[inline]
@@ -322,6 +334,6 @@ mod tests {
         });
 
         assert_eq!(b.deref(), "123".as_bytes());
-        t.join();
+        t.join().unwrap();
     }
 }
