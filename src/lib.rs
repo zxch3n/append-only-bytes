@@ -306,7 +306,7 @@ impl BytesSlice {
 
     #[inline(always)]
     pub fn downgrade(&self) -> WeakBytesSlice {
-        WeakBytesSlice::new(Arc::downgrade(&self.raw), self.start, self.end)
+        WeakBytesSlice::new(Arc::downgrade(&self.raw), self.start(), self.end())
     }
 }
 
