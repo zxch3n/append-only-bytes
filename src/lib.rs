@@ -59,6 +59,7 @@ pub struct BytesSlice {
 }
 
 unsafe impl Send for AppendOnlyBytes {}
+unsafe impl Sync for AppendOnlyBytes {}
 
 impl AppendOnlyBytes {
     #[inline(always)]
@@ -276,7 +277,10 @@ impl Deref for BytesSlice {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{
+        sync::mpsc::{self, Receiver, Sender},
+        thread,
+    };
 
     use super::*;
     #[test]
@@ -320,6 +324,7 @@ mod tests {
         let mut a = AppendOnlyBytes::new();
         a.push_str("123");
         assert_eq!(a.slice_str(0..1).unwrap(), "1");
+        let (tx, rx): (Sender<AppendOnlyBytes>, Receiver<AppendOnlyBytes>) = mpsc::channel();
         let b = a.slice(..);
         let t = thread::spawn(move || {
             for _ in 0..10 {
@@ -327,13 +332,23 @@ mod tests {
                 dbg!(a.slice_str(..).unwrap());
             }
             let c = a.slice(..);
-            drop(a);
+            tx.send(a).unwrap();
             dbg!(c.slice_str(..).unwrap());
             assert_eq!(c.len(), 33);
             assert_eq!(c.slice_str(..6).unwrap(), "123456");
         });
+        let t1 = thread::spawn(move || {
+            assert_eq!(b.deref(), "123".as_bytes());
+            for _ in 0..10 {
+                let c = b.slice_clone(0..1);
+                assert_eq!(c.deref(), "1".as_bytes());
+            }
+        });
 
-        assert_eq!(b.deref(), "123".as_bytes());
+        let a = rx.recv().unwrap();
+        assert_eq!(a.len(), 33);
+        assert_eq!(&a[..6], "123456".as_bytes());
         t.join().unwrap();
+        t1.join().unwrap()
     }
 }
