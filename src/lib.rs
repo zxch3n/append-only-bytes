@@ -54,15 +54,27 @@ impl Clone for AppendOnlyBytes {
 #[derive(Debug, Clone)]
 pub struct BytesSlice {
     raw: Arc<RawBytes>,
+    #[cfg(not(feature = "u32_range"))]
     start: usize,
+    #[cfg(not(feature = "u32_range"))]
     end: usize,
+    #[cfg(feature = "u32_range")]
+    start: u32,
+    #[cfg(feature = "u32_range")]
+    end: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct WeakBytesSlice {
     raw: Weak<RawBytes>,
+    #[cfg(not(feature = "u32_range"))]
     start: usize,
+    #[cfg(not(feature = "u32_range"))]
     end: usize,
+    #[cfg(feature = "u32_range")]
+    start: u32,
+    #[cfg(feature = "u32_range")]
+    end: u32,
 }
 
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. And the owner of the type can only append data to it.
@@ -161,20 +173,19 @@ impl AppendOnlyBytes {
     #[inline]
     pub fn slice(&self, range: impl RangeBounds<usize>) -> BytesSlice {
         let (start, end) = get_range(range, self.len());
-        BytesSlice {
-            raw: self.raw.clone(),
-            start,
-            end,
-        }
+        BytesSlice::new(self.raw.clone(), start, end)
+    }
+
+    #[inline]
+    pub fn slice_weak(&self, range: impl RangeBounds<usize>) -> WeakBytesSlice {
+        let (start, end) = get_range(range, self.len());
+        WeakBytesSlice::new(Arc::downgrade(&self.raw), start, end)
     }
 
     #[inline(always)]
     pub fn to_slice(self) -> BytesSlice {
-        BytesSlice {
-            end: self.len(),
-            raw: self.raw,
-            start: 0,
-        }
+        let end = self.len();
+        BytesSlice::new(self.raw, 0, end)
     }
 }
 
@@ -222,13 +233,28 @@ unsafe impl Sync for WeakBytesSlice {}
 
 impl BytesSlice {
     #[inline(always)]
+    fn new(raw: Arc<RawBytes>, start: usize, end: usize) -> Self {
+        Self {
+            raw,
+            #[cfg(feature = "u32_range")]
+            start: start as u32,
+            #[cfg(feature = "u32_range")]
+            end: end as u32,
+            #[cfg(not(feature = "u32_range"))]
+            start,
+            #[cfg(not(feature = "u32_range"))]
+            end,
+        }
+    }
+
+    #[inline(always)]
     fn bytes(&self) -> &[u8] {
-        self.raw.slice(self.start..self.end)
+        self.raw.slice(self.start as usize..self.end as usize)
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        self.end - self.start
+        (self.end - self.start) as usize
     }
 
     #[inline(always)]
@@ -236,14 +262,10 @@ impl BytesSlice {
         self.end == self.start
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn slice_clone(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
-        let (start, end) = get_range(range, self.end - self.start);
-        Self {
-            raw: self.raw.clone(),
-            start: self.start + start,
-            end: self.start + end,
-        }
+        let (start, end) = get_range(range, (self.end - self.start) as usize);
+        Self::new(self.raw.clone(), self.start() + start, self.start() + end)
     }
 
     #[inline(always)]
@@ -274,19 +296,39 @@ impl BytesSlice {
 
     #[inline(always)]
     pub fn start(&self) -> usize {
-        self.start
+        self.start as usize
     }
 
     #[inline(always)]
     pub fn end(&self) -> usize {
-        self.end
+        self.end as usize
+    }
+
+    #[inline(always)]
+    pub fn downgrade(&self) -> WeakBytesSlice {
+        WeakBytesSlice::new(Arc::downgrade(&self.raw), self.start, self.end)
     }
 }
 
 impl WeakBytesSlice {
     #[inline(always)]
+    fn new(raw: Weak<RawBytes>, start: usize, end: usize) -> Self {
+        Self {
+            raw,
+            #[cfg(feature = "u32_range")]
+            start: start as u32,
+            #[cfg(feature = "u32_range")]
+            end: end as u32,
+            #[cfg(not(feature = "u32_range"))]
+            start,
+            #[cfg(not(feature = "u32_range"))]
+            end,
+        }
+    }
+
+    #[inline(always)]
     pub fn len(&self) -> usize {
-        self.end - self.start
+        (self.end - self.start) as usize
     }
 
     #[inline(always)]
@@ -296,12 +338,12 @@ impl WeakBytesSlice {
 
     #[inline]
     pub fn slice_clone(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
-        let (start, end) = get_range(range, self.end - self.start);
-        Self {
-            raw: self.raw.clone(),
-            start: self.start + start,
-            end: self.start + end,
-        }
+        let (start, end) = get_range(range, (self.end - self.start) as usize);
+        Self::new(
+            self.raw.clone(),
+            self.start as usize + start,
+            self.start as usize + end,
+        )
     }
 
     #[inline(always)]
@@ -326,14 +368,15 @@ impl WeakBytesSlice {
 
     #[inline(always)]
     pub fn start(&self) -> usize {
-        self.start
+        self.start as usize
     }
 
     #[inline(always)]
     pub fn end(&self) -> usize {
-        self.end
+        self.end as usize
     }
 
+    #[inline]
     pub fn upgrade(&self) -> Option<BytesSlice> {
         self.raw.upgrade().map(|x| BytesSlice {
             raw: x,
@@ -385,7 +428,7 @@ mod tests {
         let mut a = AppendOnlyBytes::new();
         a.push_str("123");
         assert_eq!(a.slice_str(0..1).unwrap(), "1");
-        let b = a.slice(..);
+        let b = a.slice_weak(..);
         for _ in 0..10 {
             a.push_str("456");
             dbg!(a.slice_str(..).unwrap());
@@ -396,7 +439,7 @@ mod tests {
         assert_eq!(c.len(), 33);
         assert_eq!(c.slice_str(..6).unwrap(), "123456");
 
-        assert_eq!(b.deref(), "123".as_bytes());
+        assert_eq!(b.upgrade().unwrap().deref(), "123".as_bytes());
     }
 
     #[test]
