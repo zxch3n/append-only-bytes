@@ -1,85 +1,50 @@
+#![deny(clippy::undocumented_unsafe_blocks)]
+
+mod raw_bytes;
 use std::{
     fmt::Debug,
-    mem::ManuallyDrop,
     ops::{Deref, Index, RangeBounds},
     slice::SliceIndex,
     sync::Arc,
 };
 
-struct Shared {
-    ptr: *mut u8,
-    capacity: usize,
-}
-
-impl Debug for Shared {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe {
-            let slice = std::slice::from_raw_parts(self.ptr, self.capacity);
-            f.debug_tuple("Shared").field(&slice).finish()
-        }
-    }
-}
-
-impl Drop for Shared {
-    fn drop(&mut self) {
-        unsafe {
-            Vec::from_raw_parts(self.ptr, 0, self.capacity);
-        }
-    }
-}
-
-impl Shared {
-    fn slice(&self, range: impl RangeBounds<usize>) -> &[u8] {
-        let (start, end) = get_range(range, self.capacity);
-        unsafe { std::slice::from_raw_parts(self.ptr.add(start), end - start) }
-    }
-}
-
-impl From<Vec<u8>> for Shared {
-    fn from(vec: Vec<u8>) -> Self {
-        let mut vec = ManuallyDrop::new(vec);
-        Self {
-            ptr: vec.as_mut_ptr(),
-            capacity: vec.capacity(),
-        }
-    }
-}
+use raw_bytes::RawBytes;
 
 #[derive(Debug)]
 pub struct AppendOnlyBytes {
-    raw: Arc<Shared>,
+    raw: Arc<RawBytes>,
     len: usize,
 }
 
 #[derive(Debug)]
 pub struct BytesSlice {
-    raw: Arc<Shared>,
+    raw: Arc<RawBytes>,
     start: usize,
     end: usize,
 }
 
+// SAFETY: It's Send & Sync because it doesn't have interior mutability. And the owner of the type can only append data to it.
+// All the existing data will never be changed.
 unsafe impl Send for AppendOnlyBytes {}
+// SAFETY: It's Send & Sync because it doesn't have interior mutability. And the owner of the type can only append data to it.
+// All the existing data will never be changed.
 unsafe impl Sync for AppendOnlyBytes {}
 
+const MIN_CAPACITY: usize = 32;
 impl AppendOnlyBytes {
     #[inline(always)]
     pub fn new() -> Self {
-        Self::with_capacity(32)
+        Self::with_capacity(0)
     }
 
     #[inline(always)]
-    fn raw(&self) -> &[u8] {
-        self.raw.slice(..)
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw.as_bytes()[..self.len]
     }
 
     #[inline(always)]
     pub fn with_capacity(capacity: usize) -> Self {
-        let mut vec = Vec::with_capacity(capacity);
-        #[allow(clippy::uninit_vec)]
-        unsafe {
-            vec.set_len(capacity)
-        };
-        let raw = Arc::new(vec.into());
+        let raw = Arc::new(RawBytes::with_capacity(capacity));
         Self { raw, len: 0 }
     }
 
@@ -90,7 +55,7 @@ impl AppendOnlyBytes {
 
     #[inline(always)]
     pub fn capacity(&self) -> usize {
-        self.raw().len()
+        self.raw.capacity()
     }
 
     #[must_use]
@@ -101,8 +66,13 @@ impl AppendOnlyBytes {
     #[inline(always)]
     pub fn push_slice(&mut self, slice: &[u8]) {
         self.reserve(slice.len());
+        // SAFETY: We have reserved enough space for the slice
         unsafe {
-            std::ptr::copy_nonoverlapping(slice.as_ptr(), self.raw.ptr.add(self.len), slice.len());
+            std::ptr::copy_nonoverlapping(
+                slice.as_ptr(),
+                self.raw.ptr().add(self.len),
+                slice.len(),
+            );
             self.len += slice.len();
         }
     }
@@ -115,17 +85,18 @@ impl AppendOnlyBytes {
     #[inline(always)]
     pub fn push(&mut self, byte: u8) {
         self.reserve(1);
+        // SAFETY: We have reserved enough space for the byte
         unsafe {
-            std::ptr::write(self.raw.ptr.add(self.len), byte);
+            std::ptr::write(self.raw.ptr().add(self.len), byte);
             self.len += 1;
         }
     }
 
     #[inline]
     fn reserve(&mut self, size: usize) {
-        if self.len() + size > self.capacity() {
-            let target_capacity = self.len() + size;
-            let mut new_capacity = self.capacity() * 2;
+        let target_capacity = self.len() + size;
+        if target_capacity > self.capacity() {
+            let mut new_capacity = (self.capacity() * 2).max(MIN_CAPACITY);
             while new_capacity < target_capacity {
                 new_capacity *= 2;
             }
@@ -133,7 +104,7 @@ impl AppendOnlyBytes {
             let src = std::mem::replace(self, Self::with_capacity(new_capacity));
             // SAFETY: copy from src to dst, both have at least the capacity of src.len()
             unsafe {
-                std::ptr::copy_nonoverlapping(src.raw.ptr, self.raw.ptr, src.len());
+                std::ptr::copy_nonoverlapping(src.raw.ptr(), self.raw.ptr(), src.len());
                 self.len = src.len();
             }
         }
@@ -142,7 +113,7 @@ impl AppendOnlyBytes {
     #[inline]
     pub fn slice_str(&self, range: impl RangeBounds<usize>) -> Result<&str, std::str::Utf8Error> {
         let (start, end) = get_range(range, self.len());
-        std::str::from_utf8(&self.raw()[start..end])
+        std::str::from_utf8(self.raw.slice(start..end))
     }
 
     #[inline]
@@ -198,16 +169,9 @@ impl<I: SliceIndex<[u8]>> Index<I> for AppendOnlyBytes {
     }
 }
 
-impl Deref for AppendOnlyBytes {
-    type Target = [u8];
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        self.raw()
-    }
-}
-
+// SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 unsafe impl Send for BytesSlice {}
+// SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 unsafe impl Sync for BytesSlice {}
 
 impl BytesSlice {
@@ -317,6 +281,13 @@ mod tests {
         assert_eq!(c.slice_str(..6).unwrap(), "123456");
 
         assert_eq!(b.deref(), "123".as_bytes());
+    }
+
+    #[test]
+    fn push_large() {
+        let mut a = AppendOnlyBytes::new();
+        a.push_slice(&[1; 10000]);
+        assert_eq!(a.as_bytes(), &[1; 10000]);
     }
 
     #[test]
