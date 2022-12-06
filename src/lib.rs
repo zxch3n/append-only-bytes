@@ -64,7 +64,7 @@ unsafe impl Sync for AppendOnlyBytes {}
 impl AppendOnlyBytes {
     #[inline(always)]
     pub fn new() -> Self {
-        Self::with_capacity(8)
+        Self::with_capacity(32)
     }
 
     #[inline(always)]
