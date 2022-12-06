@@ -2,6 +2,7 @@ use std::{fmt::Debug, mem::ManuallyDrop, ops::RangeBounds};
 
 use crate::get_range;
 
+/// In this struct, `ptr` and `capacity` cannot be changed after created
 pub(crate) struct RawBytes {
     ptr: *mut u8,
     capacity: usize,
