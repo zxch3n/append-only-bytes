@@ -26,7 +26,7 @@ use std::{
     fmt::Debug,
     ops::{Deref, Index, RangeBounds},
     slice::SliceIndex,
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use raw_bytes::RawBytes;
@@ -54,6 +54,13 @@ impl Clone for AppendOnlyBytes {
 #[derive(Debug, Clone)]
 pub struct BytesSlice {
     raw: Arc<RawBytes>,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct WeakBytesSlice {
+    raw: Weak<RawBytes>,
     start: usize,
     end: usize,
 }
@@ -208,6 +215,10 @@ impl<I: SliceIndex<[u8]>> Index<I> for AppendOnlyBytes {
 unsafe impl Send for BytesSlice {}
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 unsafe impl Sync for BytesSlice {}
+// SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
+unsafe impl Send for WeakBytesSlice {}
+// SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
+unsafe impl Sync for WeakBytesSlice {}
 
 impl BytesSlice {
     #[inline(always)]
@@ -269,6 +280,66 @@ impl BytesSlice {
     #[inline(always)]
     pub fn end(&self) -> usize {
         self.end
+    }
+}
+
+impl WeakBytesSlice {
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.end == self.start
+    }
+
+    #[inline]
+    pub fn slice_clone(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
+        let (start, end) = get_range(range, self.end - self.start);
+        Self {
+            raw: self.raw.clone(),
+            start: self.start + start,
+            end: self.start + end,
+        }
+    }
+
+    #[inline(always)]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.raw, &other.raw)
+    }
+
+    #[inline(always)]
+    pub fn can_merge(&self, other: &Self) -> bool {
+        self.ptr_eq(other) && self.end == other.start
+    }
+
+    #[inline(always)]
+    pub fn try_merge(&mut self, other: &Self) -> Result<(), MergeFailed> {
+        if self.can_merge(other) {
+            self.end = other.end;
+            Ok(())
+        } else {
+            Err(MergeFailed)
+        }
+    }
+
+    #[inline(always)]
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    #[inline(always)]
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    pub fn upgrade(&self) -> Option<BytesSlice> {
+        self.raw.upgrade().map(|x| BytesSlice {
+            raw: x,
+            start: self.start,
+            end: self.end,
+        })
     }
 }
 
