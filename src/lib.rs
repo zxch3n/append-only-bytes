@@ -93,7 +93,7 @@ impl AppendOnlyBytes {
     }
 
     #[inline]
-    fn reserve(&mut self, size: usize) {
+    pub fn reserve(&mut self, size: usize) {
         let target_capacity = self.len() + size;
         if target_capacity > self.capacity() {
             let mut new_capacity = (self.capacity() * 2).max(MIN_CAPACITY);
