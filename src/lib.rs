@@ -37,7 +37,21 @@ pub struct AppendOnlyBytes {
     len: usize,
 }
 
-#[derive(Debug)]
+impl Clone for AppendOnlyBytes {
+    fn clone(&self) -> Self {
+        let new = RawBytes::with_capacity(self.capacity());
+        // SAFETY: raw and new have at least self.len capacity
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.raw.ptr(), new.ptr(), self.len);
+        }
+        Self {
+            raw: Arc::new(new),
+            len: self.len,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct BytesSlice {
     raw: Arc<RawBytes>,
     start: usize,
@@ -245,6 +259,16 @@ impl BytesSlice {
     pub fn slice_str(&self, range: impl RangeBounds<usize>) -> Result<&str, std::str::Utf8Error> {
         let (start, end) = get_range(range, self.len());
         std::str::from_utf8(&self.deref()[start..end])
+    }
+
+    #[inline(always)]
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    #[inline(always)]
+    pub fn end(&self) -> usize {
+        self.end
     }
 }
 
