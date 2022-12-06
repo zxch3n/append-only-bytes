@@ -26,7 +26,7 @@ use std::{
     fmt::Debug,
     ops::{Deref, Index, RangeBounds},
     slice::SliceIndex,
-    sync::{Arc, Weak},
+    sync::Arc,
 };
 
 use raw_bytes::RawBytes;
@@ -54,19 +54,6 @@ impl Clone for AppendOnlyBytes {
 #[derive(Debug, Clone)]
 pub struct BytesSlice {
     raw: Arc<RawBytes>,
-    #[cfg(not(feature = "u32_range"))]
-    start: usize,
-    #[cfg(not(feature = "u32_range"))]
-    end: usize,
-    #[cfg(feature = "u32_range")]
-    start: u32,
-    #[cfg(feature = "u32_range")]
-    end: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct WeakBytesSlice {
-    raw: Weak<RawBytes>,
     #[cfg(not(feature = "u32_range"))]
     start: usize,
     #[cfg(not(feature = "u32_range"))]
@@ -176,12 +163,6 @@ impl AppendOnlyBytes {
         BytesSlice::new(self.raw.clone(), start, end)
     }
 
-    #[inline]
-    pub fn slice_weak(&self, range: impl RangeBounds<usize>) -> WeakBytesSlice {
-        let (start, end) = get_range(range, self.len());
-        WeakBytesSlice::new(Arc::downgrade(&self.raw), start, end)
-    }
-
     #[inline(always)]
     pub fn to_slice(self) -> BytesSlice {
         let end = self.len();
@@ -227,9 +208,6 @@ unsafe impl Send for BytesSlice {}
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 unsafe impl Sync for BytesSlice {}
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
-unsafe impl Send for WeakBytesSlice {}
-// SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
-unsafe impl Sync for WeakBytesSlice {}
 
 impl BytesSlice {
     #[inline(always)]
@@ -303,87 +281,6 @@ impl BytesSlice {
     pub fn end(&self) -> usize {
         self.end as usize
     }
-
-    #[inline(always)]
-    pub fn downgrade(&self) -> WeakBytesSlice {
-        WeakBytesSlice::new(Arc::downgrade(&self.raw), self.start(), self.end())
-    }
-}
-
-impl WeakBytesSlice {
-    #[inline(always)]
-    fn new(raw: Weak<RawBytes>, start: usize, end: usize) -> Self {
-        Self {
-            raw,
-            #[cfg(feature = "u32_range")]
-            start: start as u32,
-            #[cfg(feature = "u32_range")]
-            end: end as u32,
-            #[cfg(not(feature = "u32_range"))]
-            start,
-            #[cfg(not(feature = "u32_range"))]
-            end,
-        }
-    }
-
-    #[inline(always)]
-    pub fn len(&self) -> usize {
-        (self.end - self.start) as usize
-    }
-
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.end == self.start
-    }
-
-    #[inline]
-    pub fn slice_clone(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
-        let (start, end) = get_range(range, (self.end - self.start) as usize);
-        Self::new(
-            self.raw.clone(),
-            self.start as usize + start,
-            self.start as usize + end,
-        )
-    }
-
-    #[inline(always)]
-    pub fn ptr_eq(&self, other: &Self) -> bool {
-        Weak::ptr_eq(&self.raw, &other.raw)
-    }
-
-    #[inline(always)]
-    pub fn can_merge(&self, other: &Self) -> bool {
-        self.ptr_eq(other) && self.end == other.start
-    }
-
-    #[inline(always)]
-    pub fn try_merge(&mut self, other: &Self) -> Result<(), MergeFailed> {
-        if self.can_merge(other) {
-            self.end = other.end;
-            Ok(())
-        } else {
-            Err(MergeFailed)
-        }
-    }
-
-    #[inline(always)]
-    pub fn start(&self) -> usize {
-        self.start as usize
-    }
-
-    #[inline(always)]
-    pub fn end(&self) -> usize {
-        self.end as usize
-    }
-
-    #[inline]
-    pub fn upgrade(&self) -> Option<BytesSlice> {
-        self.raw.upgrade().map(|x| BytesSlice {
-            raw: x,
-            start: self.start,
-            end: self.end,
-        })
-    }
 }
 
 #[derive(Debug)]
@@ -428,7 +325,7 @@ mod tests {
         let mut a = AppendOnlyBytes::new();
         a.push_str("123");
         assert_eq!(a.slice_str(0..1).unwrap(), "1");
-        let b = a.slice_weak(..);
+        let b = a.slice(..);
         for _ in 0..10 {
             a.push_str("456");
             dbg!(a.slice_str(..).unwrap());
@@ -439,7 +336,7 @@ mod tests {
         assert_eq!(c.len(), 33);
         assert_eq!(c.slice_str(..6).unwrap(), "123456");
 
-        assert_eq!(b.upgrade().unwrap().deref(), "123".as_bytes());
+        assert_eq!(b.deref(), "123".as_bytes());
     }
 
     #[test]
