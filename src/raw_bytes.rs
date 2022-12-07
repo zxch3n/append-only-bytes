@@ -1,4 +1,4 @@
-use std::{fmt::Debug, mem::ManuallyDrop, ops::RangeBounds};
+use std::{mem::ManuallyDrop, ops::RangeBounds};
 
 use crate::get_range;
 
@@ -6,12 +6,6 @@ use crate::get_range;
 pub(crate) struct RawBytes {
     ptr: *mut u8,
     capacity: usize,
-}
-
-impl Debug for RawBytes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Shared").field(&self.as_bytes()).finish()
-    }
 }
 
 impl Drop for RawBytes {
@@ -30,17 +24,15 @@ impl RawBytes {
         vec.into()
     }
 
+    /// # Safety
+    ///
+    /// - Caller must ensure that data inside the range is initialized
+    /// - Caller must ensure that there is no one can write to the target range when the slice is alive
     #[inline(always)]
-    pub fn slice(&self, range: impl RangeBounds<usize>) -> &[u8] {
+    pub unsafe fn slice(&self, range: impl RangeBounds<usize>) -> &[u8] {
         let (start, end) = get_range(range, self.capacity);
-        // SAFETY: We are the only owner of this memory
+        // SAFETY: Caller must ensure that data inside the range is initialized
         unsafe { std::slice::from_raw_parts(self.ptr.add(start), end - start) }
-    }
-
-    #[inline(always)]
-    pub fn as_bytes(&self) -> &[u8] {
-        // SAFETY: We are the only owner of this memory
-        unsafe { std::slice::from_raw_parts(self.ptr, self.capacity) }
     }
 
     #[inline(always)]

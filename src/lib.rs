@@ -31,10 +31,18 @@ use std::{
 
 use raw_bytes::RawBytes;
 
-#[derive(Debug)]
 pub struct AppendOnlyBytes {
     raw: Arc<RawBytes>,
     len: usize,
+}
+
+impl Debug for AppendOnlyBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppendOnlyBytes")
+            .field("data", &self.as_bytes())
+            .field("len", &self.len)
+            .finish()
+    }
 }
 
 impl Clone for AppendOnlyBytes {
@@ -51,7 +59,7 @@ impl Clone for AppendOnlyBytes {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BytesSlice {
     raw: Arc<RawBytes>,
     #[cfg(not(feature = "u32_range"))]
@@ -62,6 +70,16 @@ pub struct BytesSlice {
     start: u32,
     #[cfg(feature = "u32_range")]
     end: u32,
+}
+
+impl Debug for BytesSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BytesSlice")
+            .field("data", &&self[..])
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .finish()
+    }
 }
 
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. And the owner of the type can only append data to it.
@@ -80,7 +98,8 @@ impl AppendOnlyBytes {
 
     #[inline(always)]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.raw.as_bytes()[..self.len]
+        // SAFETY: data inside len is initialized
+        unsafe { self.raw.slice(..self.len) }
     }
 
     #[inline(always)]
@@ -154,7 +173,8 @@ impl AppendOnlyBytes {
     #[inline]
     pub fn slice_str(&self, range: impl RangeBounds<usize>) -> Result<&str, std::str::Utf8Error> {
         let (start, end) = get_range(range, self.len());
-        std::str::from_utf8(self.raw.slice(start..end))
+        // SAFETY: data inside start..end is initialized
+        std::str::from_utf8(unsafe { self.raw.slice(start..end) })
     }
 
     #[inline]
@@ -199,7 +219,8 @@ impl<I: SliceIndex<[u8]>> Index<I> for AppendOnlyBytes {
 
     #[inline]
     fn index(&self, index: I) -> &Self::Output {
-        Index::index(self.raw.slice(..), index)
+        // SAFETY: data inside 0..self.len is initialized
+        unsafe { Index::index(self.raw.slice(..self.len), index) }
     }
 }
 
@@ -227,7 +248,8 @@ impl BytesSlice {
 
     #[inline(always)]
     fn bytes(&self) -> &[u8] {
-        self.raw.slice(self.start as usize..self.end as usize)
+        // SAFETY: data inside this range is guaranteed to be initialized
+        unsafe { self.raw.slice(self.start as usize..self.end as usize) }
     }
 
     #[inline(always)]
