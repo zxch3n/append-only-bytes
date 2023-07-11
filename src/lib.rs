@@ -30,6 +30,8 @@ use std::{
 };
 
 use raw_bytes::RawBytes;
+#[cfg(feature = "serde")]
+mod serde;
 
 pub struct AppendOnlyBytes {
     raw: Arc<RawBytes>,
@@ -52,7 +54,9 @@ impl Clone for AppendOnlyBytes {
         unsafe {
             std::ptr::copy_nonoverlapping(self.raw.ptr(), new.ptr(), self.len);
         }
+
         Self {
+            #[allow(clippy::arc_with_non_send_sync)]
             raw: Arc::new(new),
             len: self.len,
         }
@@ -82,6 +86,26 @@ impl Debug for BytesSlice {
     }
 }
 
+impl PartialEq for BytesSlice {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for BytesSlice {}
+
+impl PartialOrd for BytesSlice {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.as_bytes().partial_cmp(other.as_bytes())
+    }
+}
+
+impl Ord for BytesSlice {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_bytes().cmp(other.as_bytes())
+    }
+}
+
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. And the owner of the type can only append data to it.
 // All the existing data will never be changed.
 unsafe impl Send for AppendOnlyBytes {}
@@ -104,6 +128,7 @@ impl AppendOnlyBytes {
 
     #[inline(always)]
     pub fn with_capacity(capacity: usize) -> Self {
+        #[allow(clippy::arc_with_non_send_sync)]
         let raw = Arc::new(RawBytes::with_capacity(capacity));
         Self { raw, len: 0 }
     }
@@ -228,7 +253,6 @@ impl<I: SliceIndex<[u8]>> Index<I> for AppendOnlyBytes {
 unsafe impl Send for BytesSlice {}
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 unsafe impl Sync for BytesSlice {}
-// SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 
 impl BytesSlice {
     #[inline(always)]
@@ -249,12 +273,34 @@ impl BytesSlice {
     #[inline(always)]
     fn bytes(&self) -> &[u8] {
         // SAFETY: data inside this range is guaranteed to be initialized
-        unsafe { self.raw.slice(self.start as usize..self.end as usize) }
+        unsafe { self.raw.slice(self.start()..self.end()) }
     }
 
     #[inline(always)]
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: data inside this range is guaranteed to be initialized
+        unsafe { self.raw.slice(self.start()..self.end()) }
+    }
+
+    #[inline(always)]
+    #[allow(clippy::unnecessary_cast)]
     pub fn len(&self) -> usize {
         (self.end - self.start) as usize
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let new = RawBytes::with_capacity(bytes.len());
+        // SAFETY: raw and new have at least self.len capacity
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), new.ptr(), bytes.len());
+        }
+
+        Self {
+            raw: Arc::new(new),
+            start: 0,
+            end: bytes.len(),
+        }
     }
 
     #[inline(always)]
@@ -263,6 +309,7 @@ impl BytesSlice {
     }
 
     #[inline(always)]
+    #[allow(clippy::unnecessary_cast)]
     pub fn slice_clone(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
         let (start, end) = get_range(range, (self.end - self.start) as usize);
         Self::new(self.raw.clone(), self.start() + start, self.start() + end)
@@ -295,11 +342,13 @@ impl BytesSlice {
     }
 
     #[inline(always)]
+    #[allow(clippy::unnecessary_cast)]
     pub fn start(&self) -> usize {
         self.start as usize
     }
 
     #[inline(always)]
+    #[allow(clippy::unnecessary_cast)]
     pub fn end(&self) -> usize {
         self.end as usize
     }
@@ -399,5 +448,12 @@ mod tests {
         assert_eq!(&a[..6], "123456".as_bytes());
         t.join().unwrap();
         t1.join().unwrap()
+    }
+
+    #[test]
+    fn from_bytes() {
+        let a = BytesSlice::from_bytes(b"123");
+        assert_eq!(a.len(), 3);
+        assert_eq!(a.slice_str(..).unwrap(), "123");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "append-only-bytes"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -14,3 +14,11 @@ documentation = "https://docs.rs/append-only-bytes"
 
 [features]
 u32_range = []
+default = ["serde"]
+
+[dependencies]
+serde = { version = "1.0.171", optional = true }
+
+[dev-dependencies]
+postcard = {version="1.0.4", features=["alloc"]}
+serde_json = "1.0.100"
