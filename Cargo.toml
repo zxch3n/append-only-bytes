@@ -1,6 +1,6 @@
 [package]
 name = "append-only-bytes"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -14,7 +14,7 @@ documentation = "https://docs.rs/append-only-bytes"
 
 [features]
 u32_range = []
-default = ["serde"]
+default = []
 
 [dependencies]
 serde = { version = "1.0.171", optional = true }
