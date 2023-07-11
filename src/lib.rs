@@ -279,6 +279,9 @@ impl BytesSlice {
         Self {
             raw: Arc::new(new),
             start: 0,
+            #[cfg(feature = "u32_range")]
+            end: bytes.len() as u32,
+            #[cfg(not(feature = "u32_range"))]
             end: bytes.len(),
         }
     }
