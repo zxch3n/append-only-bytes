@@ -11,6 +11,7 @@ This is safe because no mutable byte has more than one owner. If there isn't eno
 # Example
 
 ```rust
+use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 let mut bytes = AppendOnlyBytes::new();
 bytes.push_slice(&[1, 2, 3]);
 let slice: BytesSlice = bytes.slice(1..);

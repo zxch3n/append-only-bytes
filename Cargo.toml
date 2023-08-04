@@ -1,6 +1,6 @@
 [package]
 name = "append-only-bytes"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
@@ -17,7 +17,7 @@ u32_range = []
 default = []
 
 [dependencies]
-serde = { version = "1.0.171", optional = true }
+serde = { version = "1", optional = true }
 
 [dev-dependencies]
 postcard = {version="1.0.4", features=["alloc"]}
