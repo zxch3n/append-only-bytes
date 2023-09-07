@@ -76,7 +76,7 @@ impl Eq for BytesSlice {}
 
 impl PartialOrd for BytesSlice {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.as_bytes().partial_cmp(other.as_bytes())
+        Some(self.cmp(other))
     }
 }
 
@@ -296,6 +296,14 @@ impl BytesSlice {
     pub fn slice_clone(&self, range: impl std::ops::RangeBounds<usize>) -> Self {
         let (start, end) = get_range(range, (self.end - self.start) as usize);
         Self::new(self.raw.clone(), self.start() + start, self.start() + end)
+    }
+
+    #[inline(always)]
+    #[allow(clippy::unnecessary_cast)]
+    pub fn slice_(&mut self, range: impl std::ops::RangeBounds<usize>) {
+        let (start, end) = get_range(range, (self.end - self.start) as usize);
+        self.end = self.start + end;
+        self.start += start;
     }
 
     #[inline(always)]
