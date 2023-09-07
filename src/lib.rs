@@ -234,19 +234,18 @@ unsafe impl Send for BytesSlice {}
 // SAFETY: It's Send & Sync because it doesn't have interior mutability. All the accessible data in this type will never be changed.
 unsafe impl Sync for BytesSlice {}
 
+#[cfg(not(feature = "u32_range"))]
+type Int = usize;
+#[cfg(feature = "u32_range")]
+type Int = u32;
+
 impl BytesSlice {
     #[inline(always)]
     fn new(raw: Arc<RawBytes>, start: usize, end: usize) -> Self {
         Self {
             raw,
-            #[cfg(feature = "u32_range")]
-            start: start as u32,
-            #[cfg(feature = "u32_range")]
-            end: end as u32,
-            #[cfg(not(feature = "u32_range"))]
-            start,
-            #[cfg(not(feature = "u32_range"))]
-            end,
+            start: start as Int,
+            end: end as Int,
         }
     }
 
@@ -279,10 +278,7 @@ impl BytesSlice {
         Self {
             raw: Arc::new(new),
             start: 0,
-            #[cfg(feature = "u32_range")]
-            end: bytes.len() as u32,
-            #[cfg(not(feature = "u32_range"))]
-            end: bytes.len(),
+            end: bytes.len() as Int,
         }
     }
 
@@ -302,8 +298,8 @@ impl BytesSlice {
     #[allow(clippy::unnecessary_cast)]
     pub fn slice_(&mut self, range: impl std::ops::RangeBounds<usize>) {
         let (start, end) = get_range(range, (self.end - self.start) as usize);
-        self.end = self.start + end;
-        self.start += start;
+        self.end = self.start + end as Int;
+        self.start += start as Int;
     }
 
     #[inline(always)]
