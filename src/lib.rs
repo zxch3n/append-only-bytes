@@ -250,6 +250,16 @@ impl BytesSlice {
     }
 
     #[inline(always)]
+    pub fn empty() -> Self {
+        Self {
+            #[allow(clippy::arc_with_non_send_sync)]
+            raw: Arc::new(RawBytes::with_capacity(0)),
+            start: 0,
+            end: 0,
+        }
+    }
+
+    #[inline(always)]
     fn bytes(&self) -> &[u8] {
         // SAFETY: data inside this range is guaranteed to be initialized
         unsafe { self.raw.slice(self.start()..self.end()) }
